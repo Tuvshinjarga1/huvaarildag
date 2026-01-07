@@ -41,17 +41,19 @@ def getUserData():
         # Хэрэв үлдэгдэл нь 37 эсвэл 53 байвал CN буцаах
         if remainder == 37 or remainder == 53:
             response = 'CN'
+            return jsonify({
+                'uuid': uuid,
+                'hash': hash_hex,
+                'hash_decimal': str(hash_int),
+                'divisor': 283,
+                'remainder': remainder,
+                'result': response
+            }), 200
         else:
-            response = str(remainder)
-        
-        return jsonify({
-            'uuid': uuid,
-            'hash': hash_hex,
-            'hash_decimal': str(hash_int),
-            'divisor': 283,
-            'remainder': remainder,
-            'result': response
-        }), 200
+            # CN биш бол not user id буцаах
+            return jsonify({
+                'error': 'not user id'
+            }), 404
         
     except Exception as e:
         return jsonify({
