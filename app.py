@@ -42,11 +42,11 @@ def getUserData():
         if remainder == 37 or remainder == 53:
             response = 'CN'
             return jsonify({
-                'uuid': uuid,
-                'hash': hash_hex,
-                'hash_decimal': str(hash_int),
-                'divisor': 283,
-                'remainder': remainder,
+                # 'uuid': uuid,
+                # 'hash': hash_hex,
+                # 'hash_decimal': str(hash_int),
+                # 'divisor': 283,
+                # 'remainder': remainder,
                 'result': response
             }), 200
         else:
