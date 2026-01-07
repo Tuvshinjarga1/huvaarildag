@@ -10,12 +10,6 @@ UUID_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# Known UUIDs and their status
-KNOWN_UUIDS = {
-    '0bd75917-8640-4592-8fff-b8457522e18f': 'found',
-    '18296be4-f1c7-4479-a175-531cd3afbc12': 'not_found'
-}
-
 @app.route('/getUserData', methods=['POST'])
 def getUserData():
     try:
@@ -34,38 +28,28 @@ def getUserData():
                 'error': 'invalid uuid'
             }), 400
         
-        # Check if user exists
-        if uuid.lower() not in KNOWN_UUIDS:
-            return jsonify({
-                'error': 'user not found'
-            }), 404
-        
-        if KNOWN_UUIDS[uuid.lower()] == 'not_found':
-            return jsonify({
-                'error': 'user not found'
-            }), 404
-        
-        # Create SHA256 hash of the UUID
+        # SHA256 hash үүсгэх
         hash_obj = hashlib.sha256(uuid.encode('utf-8'))
         hash_hex = hash_obj.hexdigest()
         
-        # Extract characters at positions 37 and 53 (0-indexed)
-        char_37 = hash_hex[37] if len(hash_hex) > 37 else ''
-        char_53 = hash_hex[53] if len(hash_hex) > 53 else ''
+        # Hex hash-ийг 10-тын тооллын big integer болгох
+        hash_int = int(hash_hex, 16)
         
-        # Check for specific combinations and return appropriate response
-        if char_37 == 'M' and char_53 == 'N':
-            response = 'MN'
-        elif char_37 == 'C' and char_53 == 'N':
+        # 283-д хувааж, үлдэгдэл (remainder/modulo) авах
+        remainder = hash_int % 283
+        
+        # Хэрэв үлдэгдэл нь 37 эсвэл 53 байвал CN буцаах
+        if remainder == 37 or remainder == 53:
             response = 'CN'
         else:
-            response = char_37 + char_53
+            response = str(remainder)
         
         return jsonify({
             'uuid': uuid,
             'hash': hash_hex,
-            'char_37': char_37,
-            'char_53': char_53,
+            'hash_decimal': str(hash_int),
+            'divisor': 283,
+            'remainder': remainder,
             'result': response
         }), 200
         
