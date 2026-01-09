@@ -4,7 +4,8 @@ import hashlib
 import re
 import requests
 import sqlite3
-from datetime import datetime
+import geoip2.database
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -50,40 +51,40 @@ REGIONAL_SERVERS = {
     'MN': 'http://your-mn-server:3000',  # MN серверийн URL-ийг энд оруулна
 }
 
-# IP range-ийн эхний хэсгээр улс тодорхойлох (жишээ)
-# Бодит хэрэглээнд GeoIP database ашиглана
-IP_REGION_MAP = {
-    '8.130.': 'CN',      # Alibaba Cloud China
-    '47.': 'CN',         # Alibaba Cloud China
-    '39.': 'CN',         # China
-    '185.': 'RU',        # Russia range
-    '95.': 'RU',         # Russia range
-    '178.': 'RU',        # Russia range
-    '202.131.': 'MN',    # Mongolia
-    '119.40.': 'MN',     # Mongolia
-    '127.0.': 'LOCAL',   # Localhost
-    '192.168.': 'LOCAL', # Local network
-}
+# GeoIP database
+GEOIP_DB_PATH = os.environ.get('GEOIP_DB_PATH', 'GeoLite2-Country.mmdb')
+geoip_reader = None
 
-# Хэлний default тохиргоо улс бүрт
+try:
+    if os.path.exists(GEOIP_DB_PATH):
+        geoip_reader = geoip2.database.Reader(GEOIP_DB_PATH)
+except Exception:
+    pass
+
 REGION_LANGUAGE = {
     'CN': 'zh-CN',
     'RU': 'ru-RU',
     'MN': 'mn-MN',
+    'US': 'en-US',
     'LOCAL': 'en-US',
 }
 
 
 def get_region_from_ip(ip_address):
-    """IP хаягаас улс тодорхойлох"""
     if not ip_address:
         return None
     
-    for ip_prefix, region in IP_REGION_MAP.items():
-        if ip_address.startswith(ip_prefix):
-            return region
+    if ip_address.startswith('127.') or ip_address.startswith('192.168.') or ip_address.startswith('10.'):
+        return 'LOCAL'
     
-    return None
+    if not geoip_reader:
+        return None
+    
+    try:
+        response = geoip_reader.country(ip_address)
+        return response.country.iso_code
+    except Exception:
+        return None
 
 
 def get_client_ip():
