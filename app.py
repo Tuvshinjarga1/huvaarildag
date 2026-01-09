@@ -405,54 +405,65 @@ def getProductList(num):
             token = product['product_token']
             token_region = product['region']
             
-            # Хэрэв token нь client-тэй нэг улсынх бол шууд token буцаана
-            if token_region == client_region or client_region == 'LOCAL':
-                result.append({
-                    'token': token,
-                    'region': token_region,
-                    'source': 'local'
-                })
-            else:
-                # Өөр улсын серверээс бараа мэдээлэл авах
-                server_url = REGIONAL_SERVERS.get(token_region)
-                
-                if server_url:
-                    try:
-                        response = requests.get(
-                            f'{server_url}/api/v1/product/getProduct/{token}',
-                            params={'lan': lan},
-                            timeout=5
-                        )
+            # Local эсвэл remote эсэхийг тодорхойлох
+            is_local = (token_region == client_region or client_region == 'LOCAL')
+            
+            # Серверээс барааны мэдээлэл авах (нэр авахын тулд)
+            server_url = REGIONAL_SERVERS.get(token_region)
+            
+            if server_url:
+                try:
+                    response = requests.get(
+                        f'{server_url}/api/v1/product/getProduct/{token}',
+                        params={'lan': lan},
+                        timeout=5
+                    )
+                    
+                    if response.status_code == 200:
+                        product_data = response.json()
+                        # Барааны нэр авах (data.productname эсвэл productname)
+                        product_name = None
+                        if 'data' in product_data and 'productname' in product_data['data']:
+                            product_name = product_data['data']['productname']
+                        elif 'productname' in product_data:
+                            product_name = product_data['productname']
                         
-                        if response.status_code == 200:
-                            product_data = response.json()
-                            result.append({
-                                'token': token,
-                                'region': token_region,
-                                'source': 'remote',
-                                'data': product_data
-                            })
-                        else:
-                            result.append({
-                                'token': token,
-                                'region': token_region,
-                                'source': 'remote',
-                                'error': f'Failed to fetch: {response.status_code}'
-                            })
-                    except requests.exceptions.RequestException as e:
+                        item = {
+                            'token': token,
+                            'region': token_region,
+                            'source': 'local' if is_local else 'remote',
+                            'productName': product_name
+                        }
+                        
+                        # Remote бол бүх data-г нэмж өгөх
+                        if not is_local:
+                            item['data'] = product_data
+                        
+                        result.append(item)
+                    else:
                         result.append({
                             'token': token,
                             'region': token_region,
-                            'source': 'remote',
-                            'error': str(e)
+                            'source': 'local' if is_local else 'remote',
+                            'productName': None,
+                            'error': f'Failed to fetch: {response.status_code}'
                         })
-                else:
+                except requests.exceptions.RequestException as e:
                     result.append({
                         'token': token,
                         'region': token_region,
-                        'source': 'unknown',
-                        'error': 'Server not configured for this region'
+                        'source': 'local' if is_local else 'remote',
+                        'productName': None,
+                        'error': str(e)
                     })
+            else:
+                result.append({
+                    'token': token,
+                    'region': token_region,
+                    'source': 'unknown',
+                    'productName': None,
+                    'error': 'Server not configured for this region'
+                })
         
         return jsonify({
             'count': len(result),
@@ -469,4 +480,3 @@ def getProductList(num):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000, debug=True)
-
