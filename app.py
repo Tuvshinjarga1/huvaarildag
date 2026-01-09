@@ -3,9 +3,45 @@ from flask_cors import CORS
 import hashlib
 import re
 import requests
+import sqlite3
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
+
+# Database тохиргоо
+DATABASE = 'tokens.db'
+
+def init_db():
+    """Database болон хүснэгтүүдийг үүсгэх"""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Products хүснэгт
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_token TEXT UNIQUE NOT NULL,
+            region TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Users хүснэгт
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_token TEXT UNIQUE NOT NULL,
+            region TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+# App эхлэхэд database үүсгэх
+init_db()
 
 # Regional server URLs
 REGIONAL_SERVERS = {
@@ -152,6 +188,116 @@ def getProduct(token):
         return jsonify({
             'error': f'Request failed: {str(e)}'
         }), 502
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+
+@app.route('/addProduct', methods=['POST'])
+def addProduct():
+    """
+    Product token-ийг database-д хадгалах
+    Body: { "productToken": "uuid-here" }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'productToken' not in data:
+            return jsonify({
+                'error': 'Missing productToken in request body'
+            }), 400
+        
+        product_token = data['productToken']
+        
+        # UUID форматыг шалгах
+        if not UUID_PATTERN.match(product_token):
+            return jsonify({
+                'error': 'invalid productToken format'
+            }), 400
+        
+        # Region тодорхойлох
+        region = get_region_from_token(product_token)
+        
+        # Database-д хадгалах
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                'INSERT INTO products (product_token, region) VALUES (?, ?)',
+                (product_token, region)
+            )
+            conn.commit()
+            
+            return jsonify({
+                'message': 'Product token saved successfully',
+                'productToken': product_token,
+                'region': region
+            }), 201
+            
+        except sqlite3.IntegrityError:
+            return jsonify({
+                'error': 'Product token already exists'
+            }), 409
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+
+@app.route('/addUser', methods=['POST'])
+def addUser():
+    """
+    User token-ийг database-д хадгалах
+    Body: { "userToken": "uuid-here" }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'userToken' not in data:
+            return jsonify({
+                'error': 'Missing userToken in request body'
+            }), 400
+        
+        user_token = data['userToken']
+        
+        # UUID форматыг шалгах
+        if not UUID_PATTERN.match(user_token):
+            return jsonify({
+                'error': 'invalid userToken format'
+            }), 400
+        
+        # Region тодорхойлох
+        region = get_region_from_token(user_token)
+        
+        # Database-д хадгалах
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                'INSERT INTO users (user_token, region) VALUES (?, ?)',
+                (user_token, region)
+            )
+            conn.commit()
+            
+            return jsonify({
+                'message': 'User token saved successfully',
+                'userToken': user_token,
+                'region': region
+            }), 201
+            
+        except sqlite3.IntegrityError:
+            return jsonify({
+                'error': 'User token already exists'
+            }), 409
+        finally:
+            conn.close()
+            
     except Exception as e:
         return jsonify({
             'error': str(e)
