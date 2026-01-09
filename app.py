@@ -50,6 +50,55 @@ REGIONAL_SERVERS = {
     'MN': 'http://your-mn-server:3000',  # MN серверийн URL-ийг энд оруулна
 }
 
+# IP range-ийн эхний хэсгээр улс тодорхойлох (жишээ)
+# Бодит хэрэглээнд GeoIP database ашиглана
+IP_REGION_MAP = {
+    '8.130.': 'CN',      # Alibaba Cloud China
+    '47.': 'CN',         # Alibaba Cloud China
+    '39.': 'CN',         # China
+    '185.': 'RU',        # Russia range
+    '95.': 'RU',         # Russia range
+    '178.': 'RU',        # Russia range
+    '202.131.': 'MN',    # Mongolia
+    '119.40.': 'MN',     # Mongolia
+    '127.0.': 'LOCAL',   # Localhost
+    '192.168.': 'LOCAL', # Local network
+}
+
+# Хэлний default тохиргоо улс бүрт
+REGION_LANGUAGE = {
+    'CN': 'zh-CN',
+    'RU': 'ru-RU',
+    'MN': 'mn-MN',
+    'LOCAL': 'en-US',
+}
+
+
+def get_region_from_ip(ip_address):
+    """IP хаягаас улс тодорхойлох"""
+    if not ip_address:
+        return None
+    
+    for ip_prefix, region in IP_REGION_MAP.items():
+        if ip_address.startswith(ip_prefix):
+            return region
+    
+    return None
+
+
+def get_client_ip():
+    """Client-ийн IP хаягийг авах (proxy-ийн ард байсан ч)"""
+    # X-Forwarded-For header шалгах (proxy-ийн ард байвал)
+    if request.headers.get('X-Forwarded-For'):
+        # Эхний IP нь жинхэнэ client IP
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    # X-Real-IP header шалгах
+    elif request.headers.get('X-Real-IP'):
+        return request.headers.get('X-Real-IP')
+    # Шууд холбогдсон IP
+    else:
+        return request.remote_addr
+
 # UUID validation pattern
 UUID_PATTERN = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -298,6 +347,120 @@ def addUser():
         finally:
             conn.close()
             
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+
+@app.route('/getProductList/<int:num>', methods=['GET'])
+def getProductList(num):
+    """
+    Database-ээс {num} ширхэг random product token авах.
+    - Хэрэв token нь request илгээж буй сервертэй нэг улсынх бол шууд token буцаана
+    - Хэрэв token нь өөр улсынх бол тэр улсын серверээс бараа мэдээлэл авна
+    
+    Headers:
+        - X-Forwarded-For эсвэл X-Real-IP: Client IP (улс тодорхойлоход)
+    Query params:
+        - lan: Хэл (optional, default: улсын хэл)
+    """
+    try:
+        # Хамгийн ихдээ 100 бараа авах боломжтой
+        if num < 1:
+            return jsonify({'error': 'num must be at least 1'}), 400
+        if num > 100:
+            num = 100
+        
+        # Client IP-ээс улс тодорхойлох
+        client_ip = get_client_ip()
+        client_region = get_region_from_ip(client_ip)
+        
+        # Хэлний параметр авах (байхгүй бол улсын default хэл)
+        default_lan = REGION_LANGUAGE.get(client_region, 'en-US')
+        lan = request.args.get('lan', default_lan)
+        
+        # Database-ээс random token-үүд авах
+        conn = sqlite3.connect(DATABASE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            'SELECT product_token, region FROM products ORDER BY RANDOM() LIMIT ?',
+            (num,)
+        )
+        products = cursor.fetchall()
+        conn.close()
+        
+        if not products:
+            return jsonify({
+                'error': 'No products found in database',
+                'client_ip': client_ip,
+                'client_region': client_region
+            }), 404
+        
+        result = []
+        
+        for product in products:
+            token = product['product_token']
+            token_region = product['region']
+            
+            # Хэрэв token нь client-тэй нэг улсынх бол шууд token буцаана
+            if token_region == client_region or client_region == 'LOCAL':
+                result.append({
+                    'token': token,
+                    'region': token_region,
+                    'source': 'local'
+                })
+            else:
+                # Өөр улсын серверээс бараа мэдээлэл авах
+                server_url = REGIONAL_SERVERS.get(token_region)
+                
+                if server_url:
+                    try:
+                        response = requests.get(
+                            f'{server_url}/api/v1/product/getProduct/{token}',
+                            params={'lan': lan},
+                            timeout=5
+                        )
+                        
+                        if response.status_code == 200:
+                            product_data = response.json()
+                            result.append({
+                                'token': token,
+                                'region': token_region,
+                                'source': 'remote',
+                                'data': product_data
+                            })
+                        else:
+                            result.append({
+                                'token': token,
+                                'region': token_region,
+                                'source': 'remote',
+                                'error': f'Failed to fetch: {response.status_code}'
+                            })
+                    except requests.exceptions.RequestException as e:
+                        result.append({
+                            'token': token,
+                            'region': token_region,
+                            'source': 'remote',
+                            'error': str(e)
+                        })
+                else:
+                    result.append({
+                        'token': token,
+                        'region': token_region,
+                        'source': 'unknown',
+                        'error': 'Server not configured for this region'
+                    })
+        
+        return jsonify({
+            'count': len(result),
+            'client_ip': client_ip,
+            'client_region': client_region,
+            'products': result
+        }), 200
+        
     except Exception as e:
         return jsonify({
             'error': str(e)
