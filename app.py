@@ -3,45 +3,45 @@ from flask_cors import CORS
 import hashlib
 import re
 import requests
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import geoip2.database
 import os
 
 app = Flask(__name__)
 CORS(app)
 
-# Database тохиргоо
-DATABASE = 'tokens.db'
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:vtVtpJXAprWqDywFoPIaYdEVthNSkSCM@maglev.proxy.rlwy.net:50687/railway')
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    """Database болон хүснэгтүүдийг үүсгэх"""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Products хүснэгт
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_token TEXT UNIQUE NOT NULL,
-            region TEXT,
+            id SERIAL PRIMARY KEY,
+            product_token VARCHAR(255) UNIQUE NOT NULL,
+            region VARCHAR(10),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
-    # Users хүснэгт
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_token TEXT UNIQUE NOT NULL,
-            region TEXT,
+            id SERIAL PRIMARY KEY,
+            user_token VARCHAR(255) UNIQUE NOT NULL,
+            region VARCHAR(10),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
     conn.commit()
+    cursor.close()
     conn.close()
 
-# App эхлэхэд database үүсгэх
 init_db()
 
 # Regional server URLs
@@ -269,13 +269,12 @@ def addProduct():
         # Region тодорхойлох
         region = get_region_from_token(product_token)
         
-        # Database-д хадгалах
-        conn = sqlite3.connect(DATABASE)
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute(
-                'INSERT INTO products (product_token, region) VALUES (?, ?)',
+                'INSERT INTO products (product_token, region) VALUES (%s, %s)',
                 (product_token, region)
             )
             conn.commit()
@@ -286,11 +285,13 @@ def addProduct():
                 'region': region
             }), 201
             
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
+            conn.rollback()
             return jsonify({
                 'error': 'Product token already exists'
             }), 409
         finally:
+            cursor.close()
             conn.close()
             
     except Exception as e:
@@ -324,13 +325,12 @@ def addUser():
         # Region тодорхойлох
         region = get_region_from_token(user_token)
         
-        # Database-д хадгалах
-        conn = sqlite3.connect(DATABASE)
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute(
-                'INSERT INTO users (user_token, region) VALUES (?, ?)',
+                'INSERT INTO users (user_token, region) VALUES (%s, %s)',
                 (user_token, region)
             )
             conn.commit()
@@ -341,11 +341,13 @@ def addUser():
                 'region': region
             }), 201
             
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
+            conn.rollback()
             return jsonify({
                 'error': 'User token already exists'
             }), 409
         finally:
+            cursor.close()
             conn.close()
             
     except Exception as e:
@@ -381,16 +383,15 @@ def getProductList(num):
         default_lan = REGION_LANGUAGE.get(client_region, 'en-US')
         lan = request.args.get('lan', default_lan)
         
-        # Database-ээс random token-үүд авах
-        conn = sqlite3.connect(DATABASE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute(
-            'SELECT product_token, region FROM products ORDER BY RANDOM() LIMIT ?',
+            'SELECT product_token, region FROM products ORDER BY RANDOM() LIMIT %s',
             (num,)
         )
         products = cursor.fetchall()
+        cursor.close()
         conn.close()
         
         if not products:
