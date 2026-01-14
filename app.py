@@ -8,6 +8,8 @@ from psycopg2.extras import RealDictCursor
 import geoip2.database
 import os
 from dotenv import load_dotenv
+import asyncio
+import httpx
 
 # .env файлыг унших
 load_dotenv()
@@ -427,69 +429,92 @@ def getProductList(num):
         
         result = []
         
+        # Local ба remote-ийг салгах
+        local_products = []
+        remote_products = []
+        
         for product in products:
             token = product['product_token']
             token_region = product['region']
-            
-            # Local эсвэл remote эсэхийг тодорхойлох
             is_local = (token_region == client_region or client_region == 'LOCAL')
             
-            # Серверээс барааны мэдээлэл авах (нэр авахын тулд)
-            server_url = REGIONAL_SERVERS.get(token_region)
-            
-            if server_url:
-                try:
-                    response = requests.get(
-                        f'{server_url}/api/v1/product/getProduct/{token}',
-                        params={'lan': lan},
-                        timeout=5
-                    )
-                    
-                    if response.status_code == 200:
-                        product_data = response.json()
-                        # Барааны нэр авах (data.productname эсвэл productname)
-                        product_name = None
-                        if 'data' in product_data and 'productname' in product_data['data']:
-                            product_name = product_data['data']['productname']
-                        elif 'productname' in product_data:
-                            product_name = product_data['productname']
-                        
-                        item = {
-                            'token': token,
-                            'region': token_region,
-                            'source': 'local' if is_local else 'remote',
-                            'productName': product_name
-                        }
-                        
-                        # Remote бол бүх data-г нэмж өгөх
-                        if not is_local:
-                            item['data'] = product_data
-                        
-                        result.append(item)
+            if is_local:
+                local_products.append({
+                    'token': token,
+                    'region': token_region,
+                    'source': 'local',
+                    'productName': None
+                })
+            else:
+                remote_products.append((token, token_region))
+        
+        async def fetch_remote_products():
+            async_tasks = []
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                for token, token_region in remote_products:
+                    server_url = REGIONAL_SERVERS.get(token_region)
+                    if server_url:
+                        async_tasks.append(fetch_product(client, server_url, token, token_region, lan))
                     else:
                         result.append({
                             'token': token,
                             'region': token_region,
-                            'source': 'local' if is_local else 'remote',
+                            'source': 'unknown',
                             'productName': None,
-                            'error': f'Failed to fetch: {response.status_code}'
+                            'error': 'Server not configured for this region'
                         })
-                except requests.exceptions.RequestException as e:
-                    result.append({
+                
+                if async_tasks:
+                    return await asyncio.gather(*async_tasks, return_exceptions=True)
+            return []
+        
+        async def fetch_product(client, server_url, token, token_region, lan):
+            try:
+                response = await client.get(
+                    f'{server_url}/api/v1/product/getProduct/{token}',
+                    params={'lan': lan}
+                )
+                
+                if response.status_code == 200:
+                    product_data = response.json()
+                    product_name = None
+                    if 'data' in product_data and 'productname' in product_data['data']:
+                        product_name = product_data['data']['productname']
+                    elif 'productname' in product_data:
+                        product_name = product_data['productname']
+                    
+                    item = {
                         'token': token,
                         'region': token_region,
-                        'source': 'local' if is_local else 'remote',
+                        'source': 'remote',
+                        'productName': product_name,
+                        'data': product_data
+                    }
+                    return item
+                else:
+                    return {
+                        'token': token,
+                        'region': token_region,
+                        'source': 'remote',
                         'productName': None,
-                        'error': str(e)
-                    })
-            else:
-                result.append({
+                        'error': f'Failed to fetch: {response.status_code}'
+                    }
+            except Exception as e:
+                return {
                     'token': token,
                     'region': token_region,
-                    'source': 'unknown',
+                    'source': 'remote',
                     'productName': None,
-                    'error': 'Server not configured for this region'
-                })
+                    'error': str(e)
+                }
+        
+        if remote_products:
+            remote_results = asyncio.run(fetch_remote_products())
+            for item in remote_results:
+                if isinstance(item, dict):
+                    result.append(item)
+        
+        result.extend(local_products)
         
         return jsonify({
             'count': len(result),

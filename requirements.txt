@@ -4,3 +4,4 @@ requests
 geoip2
 psycopg2-binary
 python-dotenv
+httpx
