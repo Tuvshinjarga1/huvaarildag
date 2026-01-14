@@ -7,40 +7,64 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import geoip2.database
 import os
+from dotenv import load_dotenv
+
+# .env файлыг унших
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
+DB = os.getenv('CON_STRING')
+
+if not DB:
+    raise ValueError(
+        "CON_STRING environment variable is not set. "
+        "Please set CON_STRING to connect to PostgreSQL database. "
+        "Example: postgresql://user:password@localhost:5432/database"
+    )
 
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL)
+    try:
+        return psycopg2.connect(DB)
+    except psycopg2.OperationalError as e:
+        raise ConnectionError(
+            f"Failed to connect to PostgreSQL database. "
+            f"Please ensure PostgreSQL is running and CON_STRING is correct.\n"
+            f"Error: {str(e)}"
+        ) from e
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS products (
-            id SERIAL PRIMARY KEY,
-            product_token VARCHAR(255) UNIQUE NOT NULL,
-            region VARCHAR(10),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            user_token VARCHAR(255) UNIQUE NOT NULL,
-            region VARCHAR(10),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                id SERIAL PRIMARY KEY,
+                product_token VARCHAR(255) UNIQUE NOT NULL,
+                region VARCHAR(10),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                user_token VARCHAR(255) UNIQUE NOT NULL,
+                region VARCHAR(10),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to initialize database: {str(e)}\n"
+            f"Please check that PostgreSQL is running and accessible."
+        ) from e
 
 init_db()
 
